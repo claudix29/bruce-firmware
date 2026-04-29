@@ -1,4 +1,5 @@
 #include "core/powerSave.h"
+#include "core/utils.h"
 #include <Wire.h>
 #include <bq27220.h>
 #include <globals.h>
@@ -39,6 +40,11 @@ Adafruit_TCA8418 *keyboard;
 SensorDRV2605 drv;
 void hapticTest(uint8_t effect);
 uint8_t effect = 1;
+
+// Audio
+#include "AudioBoard.h"
+DriverPins PinsAudioBoardES8311;
+AudioBoard board(AudioDriverES8311, PinsAudioBoardES8311);
 
 // Keyboard
 bool fn_key_pressed = false;
@@ -145,18 +151,12 @@ void _setup_gpio() {
     bool pmu_ret = false;
     pmu_ret = PPM.init(Wire, GROVE_SDA, GROVE_SCL, BQ25896_SLAVE_ADDRESS);
     if (pmu_ret) {
-        PPM.setSysPowerDownVoltage(3300);
-        PPM.setInputCurrentLimit(3250);
-        Serial.printf("getInputCurrentLimit: %d mA\n", PPM.getInputCurrentLimit());
-        PPM.disableCurrentLimitPin();
-        PPM.setChargeTargetVoltage(4208);
-        PPM.setPrechargeCurr(64);
-        PPM.setChargerConstantCurr(832);
-        PPM.getChargerConstantCurr();
-        Serial.printf("getChargerConstantCurr: %d mA\n", PPM.getChargerConstantCurr());
+        // https://github.com/Xinyuan-LilyGO/LilyGoLib/blob/a64fc6ca94757baa5401ad71b39fb7f92cd1a7e9/src/LilyGo_LoRa_Pager.cpp#L442-L452
+        PPM.resetDefault();
+
+        PPM.setChargeTargetVoltage(4288);
+        PPM.setChargerConstantCurr(704);
         PPM.enableMeasure(PowersBQ25896::CONTINUOUS);
-        PPM.disableOTG();
-        PPM.enableCharge();
     }
 
     // Battery gauge
@@ -189,6 +189,10 @@ void _setup_gpio() {
             EXPANDS_SD_EN,
             EXPANDS_DRV_EN,
             EXPANDS_AMP_EN, // Audio
+            EXPANDS_LORA_EN,
+            EXPANDS_GPS_EN,
+            EXPANDS_GPS_RST,
+            EXPANDS_NFC_EN,
         };
         for (auto pin : expands) {
             io.pinMode(pin, OUTPUT);
@@ -212,10 +216,10 @@ void _setup_gpio() {
     keyboard->flush();
 
     // Start with default IR, RF, GPS and RFID Configs, replace old
-    bruceConfig.rfModule = CC1101_SPI_MODULE;
-    bruceConfig.rfidModule = ST25R3916_SPI_MODULE;
-    bruceConfig.irRx = 1;
-    bruceConfig.gpsBaudrate = 38400;
+    bruceConfigPins.rfModule = CC1101_SPI_MODULE;
+    bruceConfigPins.rfidModule = ST25R3916_SPI_MODULE;
+    bruceConfigPins.irRx = 1;
+    bruceConfigPins.gpsBaudrate = 38400;
 
     // Encoder
     pinMode(ENCODER_KEY, INPUT);
@@ -226,17 +230,35 @@ void _setup_gpio() {
     // Haptic driver
     if (!drv.begin(Wire, SDA, SCL)) {
         Serial.println("Failed to find DRV2605.");
-        while (1) { delay(1000); }
-    }
-    Serial.println("Init DRV2605 Sensor success!");
-    drv.selectLibrary(1);
-    drv.setMode(SensorDRV2605::MODE_INTTRIG);
-    drv.useERM();
+    } else {
+        Serial.println("Init DRV2605 Sensor success!");
+        drv.selectLibrary(1);
+        drv.setMode(SensorDRV2605::MODE_INTTRIG);
+        drv.useERM();
 
-    // Startup buzz
-    drv.setWaveform(0, 70);
-    drv.setWaveform(1, 0);
-    drv.run();
+        // Startup buzz
+        drv.setWaveform(0, 70);
+        drv.setWaveform(1, 0);
+        drv.run();
+    }
+
+    // Audio
+    // https://github.com/meshtastic/firmware/blob/ee6449746bf8c5358b8adbde05b96e2b2d04f450/src/platform/extra_variants/t_lora_pager/variant.cpp
+    // AudioDriverLogger.begin(Serial, AudioDriverLogLevel::Debug);
+    // I2C: function, scl, sda
+    PinsAudioBoardES8311.addI2C(PinFunction::CODEC, Wire);
+    // I2S: function, mclk, bck, ws, data_out, data_in
+    PinsAudioBoardES8311.addI2S(
+        PinFunction::CODEC, AUDIO_I2S_MCLK, AUDIO_I2S_SCK, AUDIO_I2S_WS, AUDIO_I2S_SDOUT, AUDIO_I2S_SDIN
+    );
+
+    // configure codec
+    CodecConfig cfg;
+    cfg.input_device = ADC_INPUT_LINE1;
+    cfg.output_device = DAC_OUTPUT_ALL;
+    cfg.i2s.bits = BIT_LENGTH_16BITS;
+    cfg.i2s.rate = RATE_44K;
+    board.begin(cfg);
 }
 
 /***************************************************************************************
@@ -368,3 +390,17 @@ bool isCharging() { return bq.getIsCharging(); }
 #else
 bool isCharging() { return false; }
 #endif
+
+/*********************************************************************
+** Function: _setup_codec_speaker
+** location: modules/others/audio.cpp
+** Handles audio CODEC to enable/disable speaker
+**********************************************************************/
+void _setup_codec_speaker(bool enable) {}
+
+/*********************************************************************
+** Function: _setup_codec_mic
+** location: modules/others/mic.cpp
+** Handles audio CODEC to enable/disable microphone
+**********************************************************************/
+void _setup_codec_mic(bool enable) {}

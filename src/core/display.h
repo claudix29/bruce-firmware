@@ -7,6 +7,8 @@
 #include <LittleFS.h>
 #include <SD.h>
 #include <globals.h>
+#define STATUS_BAR_HEIGHT 30
+#define BORDER_OFFSET_FROM_SCREEN_EDGE 5
 #define BORDER_PAD_X 10
 #define BORDER_PAD_Y 28
 #define MENU_TYPE_MAIN 0
@@ -91,13 +93,21 @@ private:
  * @param center: draw the image at the center of the screen
  * @param playDurationMs: time that the GIF will be played
  */
-bool drawImg(FS &fs, String filename, int x = 0, int y = 0, bool center = false, int playDurationMs = 0);
+bool drawImg(
+    FS &fs, String filename, int x = 0, int y = 0, bool center = false, int playDurationMs = 0,
+    bool resetButtonStatus = true
+);
 bool drawPNG(FS &fs, String filename, int x, int y, bool center);
+bool preparePngBin(FS &fs, String filename);
 bool drawBmp(FS &fs, String filename, int x = 0, int y = 0, bool center = false);
 #if !defined(LITE_VERSION)
-bool showGif(FS *fs, const char *filename, int x = 0, int y = 0, bool center = false, int playDurationMs = 0);
+bool showGif(
+    FS *fs, const char *filename, int x = 0, int y = 0, bool center = false, int playDurationMs = 0,
+    bool clearButtonStatus = true
+);
 #endif
 bool showJpeg(FS &fs, String filename, int x = 0, int y = 0, bool center = false);
+bool showJpeg(const uint8_t *data_array, size_t data_size, int x, int y, bool center = false);
 
 uint16_t getComplementaryColor(uint16_t color);
 uint16_t getComplementaryColor2(uint16_t color);
@@ -108,7 +118,8 @@ void resetTftDisplay(
     uint16_t bg = bruceConfig.bgColor, uint16_t screen = bruceConfig.bgColor
 );
 void setTftDisplay(
-    int x = 0, int y = 0, uint16_t fc = tft.textcolor, int size = tft.textsize, uint16_t bg = tft.textbgcolor
+    int x = 0, int y = 0, uint16_t fc = tft.getTextColor(), int size = tft.getTextSize(),
+    uint16_t bg = tft.getTextBgColor()
 );
 
 void turnOffDisplay();
@@ -186,8 +197,6 @@ Opt_Coord listFiles(int index, std::vector<FileList> fileList);
 void drawWireguardStatus(int x, int y);
 
 void progressHandler(int progress, size_t total, String message = "Running, Wait");
-
-int getBattery() __attribute__((weak));
 
 bool __attribute__((weak)) isCharging();
 

@@ -1,4 +1,5 @@
 #include "mykeyboard.h"
+#include "core/utils.h"
 #include "core/wifi/webInterface.h"
 #include "modules/ir/TV-B-Gone.h"
 #include "modules/ir/custom_ir.h"
@@ -7,8 +8,8 @@
 #include "sd_functions.h"
 #include <ArduinoJson.h>
 
-const int max_FM_size = tftWidth / (LW * FM) - 1;
-const int max_FP_size = tftWidth / (LW)-2;
+int max_FM_size = tftWidth / (LW * FM) - 1;
+int max_FP_size = tftWidth / (LW)-2;
 
 // QWERTY KEYSET
 const int qwerty_keyboard_width = 12;
@@ -62,6 +63,122 @@ char qwerty_keyset[qwerty_keyboard_height][qwerty_keyboard_width][2] = {
      {',', '<'},
      {'.', '>'},
      {'?', '/'},
+     {'/', '/'} }
+};
+
+// AZERTY KEYSET (French)
+const int azerty_keyboard_width = 12;
+const int azerty_keyboard_height = 4;
+char azerty_keyset[azerty_keyboard_height][azerty_keyboard_width][2] = {
+    // Row 1: numbers / symbols
+    {{'1', '&'},
+     {'2', '\xc3'}, // é
+     {'3', '"'},
+     {'4', '\''},
+     {'5', '('},
+     {'6', '-'},
+     {'7', '\xe8'}, // è
+     {'8', '_'},
+     {'9', '\xe7'}, // ç
+     {'0', '\xe0'}, // à
+     {')', '\xb0'},
+     {'=', '+'}  },
+    // Row 2: AZERTY row
+    {{'a', 'A'},
+     {'z', 'Z'},
+     {'e', 'E'},
+     {'r', 'R'},
+     {'t', 'T'},
+     {'y', 'Y'},
+     {'u', 'U'},
+     {'i', 'I'},
+     {'o', 'O'},
+     {'p', 'P'},
+     {'^', '\xa8'}, // ^ / ¨
+     {'$', '\xa3'} },// $ / £
+    // Row 3: QSDFGH row
+    {{'q', 'Q'},
+     {'s', 'S'},
+     {'d', 'D'},
+     {'f', 'F'},
+     {'g', 'G'},
+     {'h', 'H'},
+     {'j', 'J'},
+     {'k', 'K'},
+     {'l', 'L'},
+     {'m', 'M'},
+     {'\xf9', '%'}, // ù / %
+     {'*', '\xb5'} },// * / µ
+    // Row 4: WXCVBN row
+    {{'<', '>'},
+     {'w', 'W'},
+     {'x', 'X'},
+     {'c', 'C'},
+     {'v', 'V'},
+     {'b', 'B'},
+     {'n', 'N'},
+     {',', '?'},
+     {';', '.'},
+     {':', '/'},
+     {'!', '\xa7'}, // ! / §
+     {'-', '_'} }
+};
+
+// QWERTZ KEYSET (German)
+const int qwertz_keyboard_width = 12;
+const int qwertz_keyboard_height = 4;
+char qwertz_keyset[qwertz_keyboard_height][qwertz_keyboard_width][2] = {
+    // Row 1
+    {{'1', '!'},
+     {'2', '"'},
+     {'3', '\xa7'}, // §
+     {'4', '$'},
+     {'5', '%'},
+     {'6', '&'},
+     {'7', '/'},
+     {'8', '('},
+     {'9', ')'},
+     {'0', '='},
+     {'\xdf', '?'}, // ß / ?
+     {'\'', '`'} },
+    // Row 2: QWERTZ row
+    {{'q', 'Q'},
+     {'w', 'W'},
+     {'e', 'E'},
+     {'r', 'R'},
+     {'t', 'T'},
+     {'z', 'Z'},
+     {'u', 'U'},
+     {'i', 'I'},
+     {'o', 'O'},
+     {'p', 'P'},
+     {'\xfc', '\xdc'}, // ü / Ü
+     {'+', '*'}  },
+    // Row 3: ASDF row
+    {{'a', 'A'},
+     {'s', 'S'},
+     {'d', 'D'},
+     {'f', 'F'},
+     {'g', 'G'},
+     {'h', 'H'},
+     {'j', 'J'},
+     {'k', 'K'},
+     {'l', 'L'},
+     {'\xf6', '\xd6'}, // ö / Ö
+     {'\xe4', '\xc4'}, // ä / Ä
+     {'#', '\''}},
+    // Row 4: YXCVBN row
+    {{'<', '>'},
+     {'y', 'Y'},
+     {'x', 'X'},
+     {'c', 'C'},
+     {'v', 'V'},
+     {'b', 'B'},
+     {'n', 'N'},
+     {'m', 'M'},
+     {',', ';'},
+     {'.', ':'},
+     {'-', '_'},
      {'/', '/'} }
 };
 
@@ -245,12 +362,18 @@ bool handleDelete(String &current_text, int &cursor_x, int &cursor_y) {
 
 /// Handles adding a character to the text string
 bool handleCharacterAdd(
-    String &current_text, char character, int &cursor_x, int &cursor_y, const int max_size
+    String &current_text, char character, int &cursor_x, int &cursor_y, const int max_size, bool mask_input
 ) {
     if (current_text.length() >= max_size) return false;
 
     current_text += character;
-    if (current_text.length() != (max_FP_size + 1)) tft.print(character);
+    if (current_text.length() != (max_FP_size + 1)) {
+        if (mask_input) {
+            tft.print("*");
+        } else {
+            tft.print(character);
+        }
+    }
     cursor_x = tft.getCursorX();
     cursor_y = tft.getCursorY();
     return true;
@@ -269,7 +392,7 @@ enum KeyboardAction { KEYBOARD_CONTINUE, KEYBOARD_OK, KEYBOARD_CANCEL, KEYBOARD_
 /// Handles keyboard selection logic for regular keyboard
 KeyboardAction handleKeyboardSelection(
     int &x, int &y, String &current_text, bool &caps, int &cursor_x, int &cursor_y, const int max_size,
-    char character
+    char character, bool mask_input
 ) {
     tft.setCursor(cursor_x, cursor_y);
 
@@ -294,7 +417,7 @@ KeyboardAction handleKeyboardSelection(
 
     } else if (y > -1 && current_text.length() < max_size) {
         // add a letter to current_text
-        if (handleCharacterAdd(current_text, character, cursor_x, cursor_y, max_size)) {
+        if (handleCharacterAdd(current_text, character, cursor_x, cursor_y, max_size, mask_input)) {
             if (current_text.length() >= max_size) { // put the Cursor at "Ok" when max size reached
                 x = 0;
                 y = -1;
@@ -309,8 +432,11 @@ KeyboardAction handleKeyboardSelection(
 
 template <int KeyboardHeight, int KeyboardWidth>
 String generalKeyboard(
-    String current_text, int max_size, String textbox_title, char keys[KeyboardHeight][KeyboardWidth][2]
+    String current_text, int max_size, String textbox_title, char keys[KeyboardHeight][KeyboardWidth][2],
+    bool mask_input = false
 ) {
+    max_FM_size = tftWidth / (LW * FM) - 1;
+    max_FP_size = tftWidth / (LW)-2;
     resetTftDisplay();
     touchPoint.Clear();
 
@@ -436,11 +562,9 @@ String generalKeyboard(
 
     tft.fillScreen(bruceConfig.bgColor); // reset the screen
 
-#if defined(HAS_3_BUTTONS) // StickCs and Core for long press detection logic
     uint8_t longNextPress = 0;
     uint8_t longPrevPress = 0;
     unsigned long LongPressTmp = millis();
-#endif
 
     // main loop
     while (1) {
@@ -559,21 +683,35 @@ String generalKeyboard(
                 tft.fillRect(3, KBLH + 12, tftWidth - 3, KBLH, bruceConfig.bgColor);
             // write the text
             tft.setTextColor(getComplementaryColor2(bruceConfig.bgColor));
+
             if (current_text.length() >
                 max_FM_size) { // if the text is too long, we try to set the smaller font
                 tft.setTextSize(FP);
+
                 if (current_text.length() >
                     max_FP_size) { // if its still too long, we divide it into two lines
-                    tft.drawString(current_text.substring(0, max_FP_size), 5, KBLH + LH + 6);
                     tft.drawString(
-                        current_text.substring(max_FP_size, current_text.length()), 5, KBLH + 2 * LH + 6
+                        (mask_input ? repeatString(current_text.substring(0, max_FP_size).length(), "*")
+                                    : current_text.substring(0, max_FP_size)),
+                        5,
+                        KBLH + LH + 6
+                    );
+                    tft.drawString(
+                        (mask_input ? repeatString(current_text.length() - max_FP_size, "*")
+                                    : current_text.substring(max_FP_size, current_text.length())),
+                        5,
+                        KBLH + 2 * LH + 6
                     );
                 } else {
-                    tft.drawString(current_text, 5, KBLH + 14);
+                    tft.drawString(
+                        (mask_input ? repeatString(current_text.length(), "*") : current_text), 5, KBLH + 14
+                    );
                 }
             } else {
                 // else if it fits, just draw the text
-                tft.drawString(current_text, 5, KBLH + 14);
+                tft.drawString(
+                    (mask_input ? repeatString(current_text.length(), "*") : current_text), 5, KBLH + 14
+                );
             }
             // Draw the textbox border again(?)
             tft.drawRect(3, KBLH + 12, tftWidth - 3, KBLH, bruceConfig.priColor); // typed string border
@@ -628,6 +766,40 @@ String generalKeyboard(
             cursor_y = KBLH + LH + 6;
             cursor_x = 5 + current_text.length() * LW * FM;
         }
+        // Prioritize Serial Input for navigation
+        if (SerialCmdPress) { // only for Remote Control, if no type of input was detected on device
+            if (check(SelPress)) {
+                selection_made = true;
+            }
+            /* Next-Prev Btns to move in X axis (right-left) */
+            else if (check(NextPress)) {
+                NextPress = false;
+                longNextPress = false;
+                x++;
+                if ((y < 0 && x >= buttons_number) || x >= KeyboardWidth) x = 0;
+                redraw = true;
+            }
+            /* Down-Up Btns to move in Y axis */
+            else if (check(PrevPress)) {
+                PrevPress = false;
+                longPrevPress = false;
+                x--;
+                if (y < 0 && x >= buttons_number) x = buttons_number - 1;
+                else if (x < 0) x = KeyboardWidth - 1;
+                redraw = true;
+            }
+            /* Down-Up Btns to move in Y axis */
+            else if (check(DownPress)) {
+                y++;
+                if (y >= KeyboardHeight) { y = -1; }
+                redraw = true;
+            } else if (check(UpPress)) {
+                y--;
+                if (y < -1) y = KeyboardHeight - 1;
+                redraw = true;
+            }
+            last_input_time = millis() + 100;
+        }
 
         if (millis() - last_input_time > 250) { // INPUT DEBOUCING
             // waits at least 250ms before accepting another input, to prevent rapid involuntary repeats
@@ -680,9 +852,12 @@ String generalKeyboard(
                     if (box_list[k].contain(touchPoint.x, touchPoint.y)) {
                         if (caps)
                             handleCharacterAdd(
-                                current_text, box_list[k].key_sh, cursor_x, cursor_y, max_size
+                                current_text, box_list[k].key_sh, cursor_x, cursor_y, max_size, mask_input
                             );
-                        else handleCharacterAdd(current_text, box_list[k].key, cursor_x, cursor_y, max_size);
+                        else
+                            handleCharacterAdd(
+                                current_text, box_list[k].key, cursor_x, cursor_y, max_size, mask_input
+                            );
                         touchHandled = true;
                         break;
                     }
@@ -727,6 +902,22 @@ String generalKeyboard(
                     if (y < 0 && x >= buttons_number) x = 0;
                     if (x >= KeyboardWidth) x = 0;
                     else if (x < 0) x = KeyboardWidth - 1;
+
+                    // Skip over keys with '\0' value
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            x++;
+                            if (x >= KeyboardWidth) {
+                                x = 0;
+                                y++;
+                                if (y >= KeyboardHeight) {
+                                    y = -1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
                 /* UP Btn to move in Y axis (Downwards) */
@@ -755,6 +946,18 @@ String generalKeyboard(
                     if (y >= KeyboardHeight) {
                         y = -1;
                     } else if (y < -1) y = KeyboardHeight - 1;
+
+                    // Skip over keys with '\0' value
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            y++;
+                            if (y >= KeyboardHeight) {
+                                y = -1;
+                                break;
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
             }
@@ -766,23 +969,80 @@ String generalKeyboard(
                 if (check(NextPress)) {
                     x++;
                     if ((y < 0 && x >= buttons_number) || x >= KeyboardWidth) x = 0;
+
+                    // Skip over keys with '\0' value
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            x++;
+                            if (x >= KeyboardWidth) {
+                                x = 0;
+                                y++;
+                                if (y >= KeyboardHeight) {
+                                    y = -1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
                 if (check(PrevPress)) {
                     x--;
                     if (y < 0 && x >= buttons_number) x = buttons_number - 1;
                     else if (x < 0) x = KeyboardWidth - 1;
+
+                    // Skip over keys with '\0' value when moving backwards
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            x--;
+                            if (x < 0) {
+                                x = KeyboardWidth - 1;
+                                y--;
+                                if (y < 0) {
+                                    y = -1;
+                                    x = buttons_number - 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
                 /* UP Btn to move in Y axis (Downwards) */
                 if (check(DownPress)) {
                     y++;
                     if (y > KeyboardHeight - 1) { y = -1; }
+
+                    // Skip over keys with '\0' value
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            y++;
+                            if (y >= KeyboardHeight) {
+                                y = -1;
+                                break;
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
                 if (check(UpPress)) {
                     y--;
                     if (y < -1) y = KeyboardHeight - 1;
+
+                    // Skip over keys with '\0' value when moving upwards
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            y--;
+                            if (y < 0) {
+                                y = -1;
+                                break;
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
             }
@@ -835,14 +1095,20 @@ String generalKeyboard(
 #endif
 #endif
 
-#if defined(HAS_ENCODER) // T-Embed and T-LoRa-Pager
-            if (check(SelPress) || selection_made) {
+#if defined(HAS_ENCODER) // T-Embed and T-LoRa-Pager and WaveSentry
+                         // WaveSentry has Touchscreen and Encoder, but the touchscreen is prioritized
+                         // if touchscreen is pressed, ignore the encoder input
+#if !defined(HAS_TOUCH)
+            LongPress = true;
+#endif
+            if ((check(SelPress) || selection_made) && touchPoint.pressed == false) {
+                LongPress = false;
                 selection_made = true;
             } else {
                 /* NEXT "Btn" to move forward on th X axis (to the right) */
                 // if ESC is pressed while NEXT or PREV is received, then we navigate on the Y axis instead
-                if (check(NextPress)) {
-                    if (check(EscPress)) {
+                if (check(NextPress) && touchPoint.pressed == false) {
+                    if (EscPress) {
                         y++;
                     } else if ((x >= buttons_number - 1 && y <= -1) || (x >= KeyboardWidth - 1 && y >= 0)) {
                         // if we are at the end of the current line
@@ -859,11 +1125,26 @@ String generalKeyboard(
                     // the others have all the same number of keys
                     if (y == -1 && x >= buttons_number) x = 0;
 
+                    // Skip over keys with '\0' value
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            x++;
+                            if (x >= KeyboardWidth) {
+                                x = 0;
+                                y++;
+                                if (y >= KeyboardHeight) {
+                                    y = -1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
                 /* PREV "Btn" to move backwards on th X axis (to the left) */
-                if (check(PrevPress)) {
-                    if (check(EscPress)) {
+                if (check(PrevPress) && touchPoint.pressed == false) {
+                    if (EscPress) {
                         y--;
                     } else if (x <= 0) {
                         y--;
@@ -878,43 +1159,27 @@ String generalKeyboard(
                     // else if (y == -1 && x >= buttons_number) x = buttons_number - 1;
                     // else if (x < 0) x = KeyboardWidth - 1;
 
+                    // Skip over keys with '\0' value when moving backwards
+                    if (y >= 0 && y < KeyboardHeight && x >= 0 && x < KeyboardWidth) {
+                        while (keys[y][x][caps] == '\0') {
+                            x--;
+                            if (x < 0) {
+                                x = KeyboardWidth - 1;
+                                y--;
+                                if (y < 0) {
+                                    y = -1;
+                                    x = buttons_number - 1;
+                                    break;
+                                }
+                            }
+                        }
+                    }
+
                     redraw = true;
                 }
             }
 #endif
         } // end of physical input detection
-
-        if (SerialCmdPress) { // only for Remote Control, if no type of input was detected on device
-            if (check(SelPress)) {
-                selection_made = true;
-            } else {
-                /* Next-Prev Btns to move in X axis (right-left) */
-                if (check(NextPress)) {
-                    x++;
-                    if ((y < 0 && x >= buttons_number) || x >= KeyboardWidth) x = 0;
-                    redraw = true;
-                }
-                /* Down-Up Btns to move in Y axis */
-                if (check(PrevPress)) {
-                    x--;
-                    if (y < 0 && x >= buttons_number) x = buttons_number - 1;
-                    else if (x < 0) x = KeyboardWidth - 1;
-                    redraw = true;
-                }
-                /* Down-Up Btns to move in Y axis */
-                if (check(DownPress)) {
-                    y++;
-                    if (y >= KeyboardHeight) { y = -1; }
-                    redraw = true;
-                }
-                if (check(UpPress)) {
-                    y--;
-                    if (y < -1) y = KeyboardHeight - 1;
-                    redraw = true;
-                }
-            }
-        }
-
         if (selection_made) { // if something was selected then handle it
             selection_made = false;
 
@@ -923,7 +1188,7 @@ String generalKeyboard(
             if (selected_char == '\0') { continue; } // if we selected a key which have the value of
 
             KeyboardAction action = handleKeyboardSelection(
-                x, y, current_text, caps, cursor_x, cursor_y, max_size, selected_char
+                x, y, current_text, caps, cursor_x, cursor_y, max_size, selected_char, mask_input
             );
 
             if (action == KEYBOARD_OK) { // OK BTN
@@ -946,27 +1211,55 @@ String generalKeyboard(
     return current_text;
 }
 
-/// This calls the QUERTY keyboard. Returns the user typed strings, return the ASCII ESC character
-/// if the operation was cancelled
-String keyboard(String current_text, int max_size, String textbox_title) {
-    return generalKeyboard<qwerty_keyboard_height, qwerty_keyboard_width>(
-        current_text, max_size, textbox_title, qwerty_keyset
-    );
+/// Opens a simple option menu to select the keyboard layout/language.
+/// The choice is stored in bruceConfig.keyboardLang and saved to flash.
+void setKeyboardLanguage() {
+    std::vector<Option> langOptions = {
+        {"QWERTY (English)",  []() { bruceConfig.keyboardLang = "QWERTY";  bruceConfig.saveFile(); }},
+        {"AZERTY (Français)", []() { bruceConfig.keyboardLang = "AZERTY";  bruceConfig.saveFile(); }},
+        {"QWERTZ (Deutsch)",  []() { bruceConfig.keyboardLang = "QWERTZ";  bruceConfig.saveFile(); }},
+        {"Back",              []() {}                                                                },
+    };
+
+    // Show current selection in the title
+    String title = String("Keyboard: ") + bruceConfig.keyboardLang;
+    loopOptions(langOptions, MENU_TYPE_SUBMENU, title.c_str());
+}
+
+/// This calls the keyboard. The keyset is chosen based on bruceConfig.keyboardLang.
+/// Supported values: "QWERTY" (default), "AZERTY" (French), "QWERTZ" (German).
+/// Returns the user typed string, or the ASCII ESC character if cancelled.
+String keyboard(String current_text, int max_size, String textbox_title, bool mask_input) {
+    String lang = bruceConfig.keyboardLang;
+    if (lang == "AZERTY") {
+        return generalKeyboard<azerty_keyboard_height, azerty_keyboard_width>(
+            current_text, max_size, textbox_title, azerty_keyset, mask_input
+        );
+    } else if (lang == "QWERTZ") {
+        return generalKeyboard<qwertz_keyboard_height, qwertz_keyboard_width>(
+            current_text, max_size, textbox_title, qwertz_keyset, mask_input
+        );
+    } else {
+        // Default: QWERTY
+        return generalKeyboard<qwerty_keyboard_height, qwerty_keyboard_width>(
+            current_text, max_size, textbox_title, qwerty_keyset, mask_input
+        );
+    }
 }
 
 /// This calls a keyboard with the characters useful to write hexadecimal codes.
 /// Returns the user typed strings, return the ASCII ESC character if the operation was cancelled
-String hex_keyboard(String current_text, int max_size, String textbox_title) {
+String hex_keyboard(String current_text, int max_size, String textbox_title, bool mask_input) {
     return generalKeyboard<hex_keyboard_height, hex_keyboard_width>(
-        current_text, max_size, textbox_title, hex_keyset
+        current_text, max_size, textbox_title, hex_keyset, mask_input
     );
 }
 
 /// This calls a numbers only keyboard. Returns the user typed strings, return the ASCII ESC character
 /// if the operation was cancelled
-String num_keyboard(String current_text, int max_size, String textbox_title) {
+String num_keyboard(String current_text, int max_size, String textbox_title, bool mask_input) {
     return generalKeyboard<numpad_keyboard_height, numpad_keyboard_width>(
-        current_text, max_size, textbox_title, numpad_keyset
+        current_text, max_size, textbox_title, numpad_keyset, mask_input
     );
 }
 

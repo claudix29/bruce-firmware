@@ -7,6 +7,8 @@
 
 #define _MAX_TRIES 5
 
+#define PRESET_KEELOQ 23
+
 class RFScan {
 public:
     enum RFMenuOption {
@@ -46,7 +48,7 @@ private:
     float frequency = 0.f;
     uint8_t _try = 0;
     FreqFound _freqs[_MAX_TRIES]; // get the best RSSI out of 5 tries
-    int idx = range_limits[bruceConfig.rfScanRange][0];
+    int idx = range_limits[bruceConfigPins.rfScanRange][0];
     float found_freq = 0.f;
     int rssi = -80;
     int rssiThreshold = -65;
@@ -67,7 +69,7 @@ private:
     void save_signal(bool asRaw = false);
     void reset_signals();
     void set_threshold();
-    void set_range();
+    // void set_range(); // Using similar function from rf_utils.h
 
     /////////////////////////////////////////////////////////////////////////////////////
     // Utils
@@ -86,6 +88,6 @@ void display_signal_data(RfCodes received);
 bool RCSwitch_SaveSignal(float frequency, RfCodes codes, bool raw, char *key, bool autoSave = false);
 
 String rf_scan(float start_freq, float stop_freq, int max_loops = -1);
-String RCSwitch_Read(float frequency = 0, int max_loops = -1, bool raw = false);
+String RCSwitch_Read(float frequency = 0, int max_loops = -1, bool raw = false, bool headless = false);
 
 #endif

@@ -187,8 +187,9 @@ void BleKeyboard::begin(const uint8_t *layout, uint16_t showAs) {
 
         advertising->addServiceUUID(hid->getHidService()->getUUID());
         NimBLEAdvertisementData advertisementData = NimBLEAdvertisementData();
-        advertisementData.setFlags(0x06);
+        advertisementData.setFlags(BLE_HS_ADV_F_DISC_GEN);
         advertisementData.setName(deviceName.c_str());
+        advertisementData.setAppearance(appearance);
         advertising->setAdvertisementData(advertisementData);
     }
 
@@ -205,7 +206,11 @@ void BleKeyboard::end(void) {
         for (j = 0; j < i; j++) pServer->disconnect(pServer->getPeerInfo(i).getConnHandle());
     }
     delete hid;
+#if defined(CONFIG_IDF_TARGET_ESP32C5)
+    esp_bt_controller_deinit();
+#else
     BLEDevice::deinit();
+#endif
     this->connected = false;
 }
 

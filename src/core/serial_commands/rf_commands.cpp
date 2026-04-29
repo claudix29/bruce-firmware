@@ -120,7 +120,9 @@ uint32_t rfTxFileCallback(cmd *c) {
         return false;
     }
 
-    return txSubFile(fs, filepath, hideDefaultUI);
+    RfCodes data{};
+
+    return readSubFile(fs, filepath, data) && txSubFile(data, hideDefaultUI);
 }
 
 uint32_t rfTxBufferCallback(cmd *c) {
@@ -136,7 +138,11 @@ uint32_t rfTxBufferCallback(cmd *c) {
     f.close();
     free(txt);
 
-    bool r = txSubFile(&PSRamFS, tmpfilepath);
+    RfCodes data{};
+
+    bool r = readSubFile(&PSRamFS, tmpfilepath, data);
+
+    r = txSubFile(data);
     PSRamFS.remove(tmpfilepath);
 
     return r;
@@ -203,7 +209,7 @@ uint32_t rfSendCallback(cmd *c) {
 
 void createRfRxCommand(Command *rfCmd) {
     Command cmd = rfCmd->addCommand("rx", rfRxCallback);
-    cmd.addPosArg("frequency", String(bruceConfig.rfFreq).c_str());
+    cmd.addPosArg("frequency", String(bruceConfigPins.rfFreq).c_str());
     cmd.addFlagArg("raw");
 }
 

@@ -9,6 +9,9 @@
 #include <esp_netif.h>
 #include <globals.h>
 
+static TaskHandle_t timezoneTaskHandle = NULL;
+static bool wifiTransitioning = false;
+
 void ensureWifiPlatform() {
     static bool netifInitialized = false;
     static bool eventLoopCreated = false;
@@ -37,7 +40,7 @@ void ensureWifiPlatform() {
 
 bool _wifiConnect(const String &ssid, int encryption) {
     String password = bruceConfig.getWifiPassword(ssid);
-    if (password == "" && encryption > 0) { password = keyboard(password, 63, "Network Password:"); }
+    if (password == "" && encryption > 0) { password = keyboard(password, 63, "Network Password:", true); }
     bool connected = _connectToWifiNetwork(ssid, password);
     bool retry = false;
 
@@ -55,7 +58,7 @@ bool _wifiConnect(const String &ssid, int encryption) {
             return false;
         }
 
-        password = keyboard(password, 63, "Network Password:");
+        password = keyboard(password, 63, "Network Password:", true);
         connected = _connectToWifiNetwork(ssid, password);
     }
 
@@ -63,7 +66,11 @@ bool _wifiConnect(const String &ssid, int encryption) {
         wifiConnected = true;
         wifiIP = WiFi.localIP().toString();
         bruceConfig.addWifiCredential(ssid, password);
-        updateClockTimezone();
+
+        // Start timezone update in background if not already running
+        if (timezoneTaskHandle == NULL) {
+            xTaskCreate(updateTimezoneTask, "updateTimezone", 4096, NULL, 1, &timezoneTaskHandle);
+        }
     }
 
     delay(200);
@@ -114,15 +121,28 @@ bool _setupAP() {
 }
 
 void wifiDisconnect() {
+    wifiTransitioning = true;
+    
     WiFi.softAPdisconnect(true); // turn off AP mode
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     WiFi.disconnect(true, true); // turn off STA mode
+    vTaskDelay(10 / portTICK_PERIOD_MS);
     WiFi.mode(WIFI_OFF);         // enforces WIFI_OFF mode
+    vTaskDelay(10 / portTICK_PERIOD_MS);
+    
     wifiConnected = false;
-    returnToMenu = true;
+    wifiTransitioning = false;
 }
 
 bool wifiConnectMenu(wifi_mode_t mode) {
     if (WiFi.isConnected()) return false; // safeguard
+
+    // Check if WiFi is in transition
+    if (wifiTransitioning) {
+        displayTextLine("WiFi busy, please wait...");
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        return false;
+    }
 
     switch (mode) {
         case WIFI_AP: // access point
@@ -134,7 +154,7 @@ bool wifiConnectMenu(wifi_mode_t mode) {
             int nets;
             WiFi.mode(WIFI_MODE_STA);
 
-            //wifiMACMenu();
+            // wifiMACMenu();
             applyConfiguredMAC();
 
             bool refresh_scan = false;
@@ -195,12 +215,21 @@ bool wifiConnectMenu(wifi_mode_t mode) {
             break;
     }
 
-    if (returnToMenu) return false;
+    if (returnToMenu) {
+        wifiDisconnect(); // Forced turning off the wifi module if exiting back to the menu
+        return false;
+    }
     return wifiConnected;
 }
 
 void wifiConnectTask(void *pvParameters) {
     if (WiFi.status() == WL_CONNECTED) return;
+
+    // Check if WiFi is in transition
+    if (wifiTransitioning) {
+        vTaskDelete(NULL);
+        return;
+    }
 
     WiFi.mode(WIFI_MODE_STA);
     int nets = WiFi.scanNetworks();
@@ -217,13 +246,18 @@ void wifiConnectTask(void *pvParameters) {
             if (WiFi.status() == WL_CONNECTED) {
                 wifiConnected = true;
                 wifiIP = WiFi.localIP().toString();
-                updateClockTimezone();
+
+                // Start timezone update in background if not already running
+                if (timezoneTaskHandle == NULL) {
+                    xTaskCreate(updateTimezoneTask, "updateTimezone", 4096, NULL, 1, &timezoneTaskHandle);
+                }
                 drawStatusBar();
                 break;
             }
             vTaskDelay(100 / portTICK_RATE_MS);
         }
     }
+    WiFi.scanDelete();
 
     vTaskDelete(NULL);
     return;
@@ -233,6 +267,14 @@ String checkMAC() { return String(WiFi.macAddress()); }
 
 bool wifiConnecttoKnownNet(void) {
     if (WiFi.isConnected()) return true; // safeguard
+    
+    // Check if WiFi is in transition
+    if (wifiTransitioning) {
+        displayTextLine("WiFi busy, please wait...");
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        return false;
+    }
+    
     bool result = false;
     int nets;
     // WiFi.mode(WIFI_MODE_STA);
@@ -258,7 +300,23 @@ bool wifiConnecttoKnownNet(void) {
     if (WiFi.status() == WL_CONNECTED) {
         wifiConnected = true;
         wifiIP = WiFi.localIP().toString();
-        updateClockTimezone();
+
+        // Start timezone update in background if not already running
+        if (timezoneTaskHandle == NULL) {
+            xTaskCreate(updateTimezoneTask, "updateTimezone", 4096, NULL, 1, &timezoneTaskHandle);
+        }
     }
     return result;
+}
+
+void updateTimezoneTask(void *pvParameters) {
+    // Wait a bit for connection to stabilize before updating timezone
+    vTaskDelay(5000 / portTICK_PERIOD_MS);
+
+    // Only update timezone if WiFi is still connected
+    if (WiFi.isConnected() && wifiConnected) { updateClockTimezone(); }
+
+    // Clear the task handle before deleting
+    timezoneTaskHandle = NULL;
+    vTaskDelete(NULL);
 }

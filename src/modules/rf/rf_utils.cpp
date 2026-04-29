@@ -1,4 +1,5 @@
 #include "rf_utils.h"
+#include "core/sd_functions.h"
 #include "core/settings.h"
 
 // CRC-64-ECMA constants
@@ -82,12 +83,142 @@ int recent_rfcodes_last_used = 0; // TODO: save/load in EEPROM
 bool rmtInstalled = true;
 static bool cc1101_spi_ready = false;
 
+bool RfCodes::keeloq_check_decrypt(uint32_t decrypt) {
+    uint16_t end_serial = serial & 0xFF;
+
+    if ((decrypt >> 28 == btn) && (((((uint16_t)(decrypt >> 16)) & 0xFF) == end_serial) ||
+                                   ((((uint16_t)(decrypt >> 16)) & 0xFF) == 0))) {
+        cnt = decrypt & 0xFFFF;
+
+        return true;
+    }
+
+    return false;
+}
+
+bool RfCodes::keeloq_check_decrypt_centurion(uint32_t decrypt) {
+    if ((decrypt >> 28 == btn) && ((((uint16_t)(decrypt >> 16)) & 0x3FF) == 0x1CE)) {
+        cnt = decrypt & 0xFFFF;
+
+        return true;
+    }
+
+    return false;
+}
+
+void RfCodes::keeloq_step(uint16_t step) {
+    cnt += step;
+
+    hop = btn << 28 | (serial & 0x3FF) << 16 | cnt;
+
+    if (mf_name == "Aprimatic") {
+        uint32_t apri_serial = serial;
+        uint8_t apr1 = 0;
+
+        for (uint16_t i = 1; i != 0b10000000000; i <<= 1) {
+            if (apri_serial & i) apr1++;
+        }
+
+        apri_serial &= 0b00001111111111;
+
+        if (apr1 % 2 == 0) { apri_serial |= 0b110000000000; }
+
+        hop = btn << 28 | (apri_serial & 0xFFF) << 16 | cnt;
+    } else if (mf_name == "DTM_Neo" || mf_name == "FAAC_RC,XT" || mf_name == "Mutanco_Mutancode" ||
+               mf_name == "Came_Space" || mf_name == "Genius_Bravo" || mf_name == "GSN" ||
+               mf_name == "Rosh" || mf_name == "Rossi" || mf_name == "Peccinin" || mf_name == "Steelmate" ||
+               mf_name == "Cardin_S449") {
+        hop = btn << 28 | (serial & 0xFFF) << 16 | cnt;
+    } else if (mf_name == "NICE_Smilo" || mf_name == "NICE_MHOUSE" || mf_name == "JCM_Tech") {
+        hop = btn << 28 | (serial & 0xFF) << 16 | cnt;
+    } else if (mf_name == "Merlin") {
+        hop = btn << 28 | (0x000) << 16 | cnt;
+    } else if (mf_name == "Centurion") {
+        hop = btn << 28 | (0x1CE) << 16 | cnt;
+    } else if (mf_name == "Monarch") {
+        hop = btn << 28 | (0x100) << 16 | cnt;
+    } else if (mf_name == "Dea_Mio") {
+        uint8_t first_disc_num = (serial >> 8) & 0xF;
+        uint8_t result_disc = (0xC + (first_disc_num % 4));
+
+        uint32_t dea_serial = (serial & 0xFF) | (((uint32_t)result_disc) << 8);
+
+        hop = btn << 28 | (dea_serial & 0xFFF) << 16 | cnt;
+    }
+
+    FS *fs = NULL;
+
+    if (!getFsStorage(fs)) { return; }
+
+    KeeloqKeystore keystore{fs};
+
+    KeeloqKey current_key;
+
+    for (const auto &key : keystore.get_keys()) {
+        if (key.mf_name == mf_name) { current_key = key; }
+    }
+
+    switch (current_key.type) {
+        case KEELOQ_SIMPLE_LEARNING: {
+            encrypted = keeloq_encrypt(hop, current_key.key);
+
+            break;
+        }
+        case KEELOQ_NORMAL_LEARNING: {
+            uint64_t man = keeloq_normal_learning(hop, current_key.key);
+
+            encrypted = keeloq_encrypt(hop, man);
+
+            break;
+        }
+    }
+
+    key = reverse_bits(encrypted, 32) << 32 | reverse_bits(fix, 32);
+}
+
+std::vector<String> split_string(String str, char c) {
+    std::vector<String> cols{};
+    size_t start = 0;
+
+    while (start < str.length()) {
+        auto it = str.indexOf(c, start);
+
+        if (it == -1) break;
+
+        cols.emplace_back(&str[start], it - start);
+        start = it + 1;
+    }
+
+    if (start <= str.length() && !str.isEmpty()) cols.emplace_back(&str[start], str.length() - start);
+
+    return cols;
+}
+
+KeeloqKeystore::KeeloqKeystore(FS *fs) {
+    File keystore = fs->open("/mfcodes");
+
+    if (!keystore) { return; }
+
+    String line = keystore.readStringUntil('\n');
+
+    for (; line != ""; line = keystore.readStringUntil('\n')) {
+        auto cols = split_string(line, ';');
+
+        if (cols.size() != 3) { return; }
+
+        KeeloqKey key{cols[0], std::strtoull(cols[1].c_str(), NULL, 16), (uint8_t)cols[2].toInt()};
+
+        keys.push_back(key);
+    }
+}
+
+const std::vector<KeeloqKey> &KeeloqKeystore::get_keys() { return keys; }
+
 bool initRfModule(String mode, float frequency) {
-
     // use default frequency if no one is passed
-    if (!frequency) frequency = bruceConfig.rfFreq;
+    if (!frequency) frequency = bruceConfigPins.rfFreq;
 
-    if (bruceConfig.rfModule == CC1101_SPI_MODULE) { // CC1101 in use
+    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) { // CC1101 in use
         if (bruceConfigPins.CC1101_bus.mosi == (gpio_num_t)TFT_MOSI &&
             bruceConfigPins.CC1101_bus.mosi != GPIO_NUM_NC) { // (T_EMBED), CORE2 and others
 #if TFT_MOSI > 0
@@ -104,11 +235,18 @@ bool initRfModule(String mode, float frequency) {
                        bruceConfigPins.SDCARD_bus
                            .mosi) { // This board uses the same Bus for NRF and CC1101, but with
                                     // different CS pins, different from Stick_Cs down below..
-            CC_NRF_SPI.begin(
-                bruceConfigPins.CC1101_bus.sck,
-                bruceConfigPins.CC1101_bus.miso,
-                bruceConfigPins.CC1101_bus.mosi
-            );
+
+            CC_NRF_SPI.end(); // Closes in case it was already in use, it will overwrite the attempt
+                              // of SD start over to save configurations
+            delay(10);
+            if (!CC_NRF_SPI.begin(
+                    bruceConfigPins.CC1101_bus.sck,
+                    bruceConfigPins.CC1101_bus.miso,
+                    bruceConfigPins.CC1101_bus.mosi
+                )) {
+                Serial.println("Failed to start CC1101 SPI on NRF24 pins!");
+            }
+
             initCC1101once(&CC_NRF_SPI);
         } else {
             // (STICK_C_PLUS) || (STICK_C_PLUS2) and others that doesn´t share SPI with other devices (need to
@@ -178,24 +316,24 @@ bool initRfModule(String mode, float frequency) {
         cc1101_spi_ready = true;
     } else {
         // single-pinned module
-        if (abs(frequency - bruceConfig.rfFreq) > 1) {
+        if (abs(frequency - bruceConfigPins.rfFreq) > 1) {
             Serial.print("warn: unsupported frequency, trying anyway...");
             // return false;
         }
 
         if (mode == "tx") {
             gsetRfTxPin(false);
-            if (bruceConfigPins.SDCARD_bus.checkConflict(bruceConfig.rfTx)) sdcardSPI.end();
-            gpio_reset_pin((gpio_num_t)bruceConfig.rfTx);
-            pinMode(bruceConfig.rfTx, OUTPUT);
-            digitalWrite(bruceConfig.rfTx, LOW);
+            if (bruceConfigPins.SDCARD_bus.checkConflict(bruceConfigPins.rfTx)) sdcardSPI.end();
+            gpio_reset_pin((gpio_num_t)bruceConfigPins.rfTx);
+            pinMode(bruceConfigPins.rfTx, OUTPUT);
+            digitalWrite(bruceConfigPins.rfTx, LOW);
 
         } else if (mode == "rx") {
             // Rx Mode
             gsetRfRxPin(false);
-            if (bruceConfigPins.SDCARD_bus.checkConflict(bruceConfig.rfRx)) sdcardSPI.end();
-            gpio_reset_pin((gpio_num_t)bruceConfig.rfRx);
-            pinMode(bruceConfig.rfRx, INPUT);
+            if (bruceConfigPins.SDCARD_bus.checkConflict(bruceConfigPins.rfRx)) sdcardSPI.end();
+            gpio_reset_pin((gpio_num_t)bruceConfigPins.rfRx);
+            pinMode(bruceConfigPins.rfRx, INPUT);
         }
     }
     // no error
@@ -203,7 +341,7 @@ bool initRfModule(String mode, float frequency) {
 }
 
 void deinitRfModule() {
-    if (bruceConfig.rfModule == CC1101_SPI_MODULE) {
+    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) {
         if (cc1101_spi_ready) {
             ELECHOUSE_cc1101.setSidle();
             cc1101_spi_ready = false;
@@ -212,7 +350,7 @@ void deinitRfModule() {
         digitalWrite(bruceConfigPins.CC1101_bus.cs, HIGH);
         ioExpander.turnPinOnOff(IO_EXP_CC_RX, LOW);
         ioExpander.turnPinOnOff(IO_EXP_CC_TX, LOW);
-    } else digitalWrite(bruceConfig.rfTx, LED_OFF);
+    } else digitalWrite(bruceConfigPins.rfTx, LED_OFF);
 }
 
 void initCC1101once(SPIClass *SSPI) {
@@ -234,60 +372,12 @@ void initCC1101once(SPIClass *SSPI) {
     return;
 }
 
-void deinitRMT() {
-#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)) // RMT
-#pragma message("Should not be using deinitRMT()")
-#else
-    if (rmtInstalled) {
-        esp_err_t err = rmt_driver_uninstall((rmt_channel_t)RMT_RX_CHANNEL);
-        if (err == ESP_OK) {
-            rmtInstalled = false;
-        } else {
-            Serial.printf("RMT uninstall failed: %s\n", esp_err_to_name(err));
-        }
-    } else {
-        Serial.println("RMT already uninstalled.");
-    }
-
-#endif
-}
-
-void initRMT() {
-#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)) // RMT
-#pragma message("Should not be using initRMT()")
-#else
-    deinitRMT();
-
-    rmt_config_t rxconfig;
-    rxconfig.rmt_mode = RMT_MODE_RX;
-    rxconfig.channel = RMT_RX_CHANNEL;
-    rxconfig.gpio_num = gpio_num_t(bruceConfig.rfRx);
-
-    if (bruceConfig.rfModule == CC1101_SPI_MODULE)
-        rxconfig.gpio_num = gpio_num_t(bruceConfigPins.CC1101_bus.io0);
-
-    rxconfig.clk_div = RMT_CLK_DIV; // RMT_DEFAULT_CLK_DIV=32
-    rxconfig.mem_block_num = 2;
-    rxconfig.flags = 0;
-    rxconfig.rx_config.idle_threshold = 3 * RMT_1MS_TICKS,
-    rxconfig.rx_config.filter_ticks_thresh = 200 * RMT_1US_TICKS;
-    rxconfig.rx_config.filter_en = true;
-
-    ESP_ERROR_CHECK(rmt_config(&rxconfig));
-    ESP_ERROR_CHECK_WITHOUT_ABORT(rmt_driver_install(rxconfig.channel, 8192, 0));
-
-    if (ESP_OK == rmt_config(&rxconfig) && ESP_OK == rmt_driver_install(rxconfig.channel, 8192, 0)) {
-        rmtInstalled = true;
-    }
-#endif
-}
-
 void setMHZ(float frequency) {
     if (frequency > 928 || frequency < 280) {
         frequency = 433.92;
         Serial.println("Frequency out of band");
     }
-    if (bruceConfig.rfModule == CC1101_SPI_MODULE) {
+    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) {
 #if defined(T_EMBED)
         static uint8_t antenna =
             200; // 0=(<300), 1=(350-468), 2=(>778), 200=start to settle at the fisrt time
@@ -345,6 +435,17 @@ int find_pulse_index(const std::vector<int> &indexed_durations, int duration) {
     return closest_index; // Otherwise, return the closest match
 }
 
+uint64_t reverse_bits(uint64_t num, uint8_t bits) {
+    uint64_t res = 0;
+
+    for (uint8_t i = 0; i < bits; ++i) {
+        res <<= 1;
+        res |= bitAt(num, i);
+    }
+
+    return res;
+}
+
 // Function to compute CRC-64-ECMA
 uint64_t crc64_ecma(const std::vector<int> &data) {
     uint64_t crc = CRC64_ECMA_INIT;
@@ -389,15 +490,14 @@ struct RfCodes selectRecentRfMenu() {
 
     return selected_code;
 }
-#if (ESP_IDF_VERSION >= ESP_IDF_VERSION_VAL(5, 0, 0)) // RMT
 rmt_channel_handle_t setup_rf_rx() {
-    if (!initRfModule("rx", bruceConfig.rfFreq)) return NULL;
-    setMHZ(bruceConfig.rfFreq);
+    if (!initRfModule("rx", bruceConfigPins.rfFreq)) return NULL;
+    setMHZ(bruceConfigPins.rfFreq);
     rmt_rx_channel_config_t rx_channel_cfg = {};
-    rx_channel_cfg.gpio_num = bruceConfig.rfModule == CC1101_SPI_MODULE
+    rx_channel_cfg.gpio_num = bruceConfigPins.rfModule == CC1101_SPI_MODULE
                                   ? gpio_num_t(bruceConfigPins.CC1101_bus.io0)
-                                  : gpio_num_t(bruceConfig.rfRx); // GPIO number
-    rx_channel_cfg.clk_src = RMT_CLK_SRC_DEFAULT;                 // select source clock
+                                  : gpio_num_t(bruceConfigPins.rfRx); // GPIO number
+    rx_channel_cfg.clk_src = RMT_CLK_SRC_DEFAULT;                     // select source clock
     rx_channel_cfg.resolution_hz = 1 * 1000 * 1000; // 1 MHz tick resolution, i.e., 1 tick = 1 µs
     rx_channel_cfg.mem_block_symbols = 64;          // memory block size, 64 * 4 = 256 Bytes
     rx_channel_cfg.intr_priority = 0;               // interrupt priority
@@ -410,4 +510,91 @@ rmt_channel_handle_t setup_rf_rx() {
     ESP_ERROR_CHECK(rmt_new_rx_channel(&rx_channel_cfg, &rx_channel));
     return rx_channel;
 }
-#endif
+
+bool setMHZMenu() {
+    if (bruceConfigPins.rfModule != CC1101_SPI_MODULE) return false;
+    if (check(SelPress)) {
+        options = {};
+        int ind = 0;
+        int arraySize = sizeof(subghz_frequency_list) / sizeof(subghz_frequency_list[0]);
+        for (int i = 0; i < arraySize; i++) {
+            if (subghz_frequency_list[i] - bruceConfigPins.rfFreq < 0.1) ind = i;
+            String tmp = String(subghz_frequency_list[i], 2) + "Mhz";
+            options.push_back({tmp.c_str(), [=]() { bruceConfigPins.rfFreq = subghz_frequency_list[i]; }});
+        }
+        loopOptions(options, ind);
+        options.clear();
+        setMHZ(bruceConfigPins.rfFreq);
+        return true;
+    }
+    return false;
+}
+
+void rf_range_selection(float currentFrequency) {
+    int option = 0;
+    options = {
+        {String("Fixed [" + String(bruceConfigPins.rfFreq) + "]").c_str(),
+         [=]() { bruceConfigPins.setRfFreq(bruceConfigPins.rfFreq, 2); }                                               },
+        {String("Choose Fixed").c_str(),                                   [&]() { option = 1; }                       },
+        {subghz_frequency_ranges[0],                                       [=]() { bruceConfigPins.setRfScanRange(0); }},
+        {subghz_frequency_ranges[1],                                       [=]() { bruceConfigPins.setRfScanRange(1); }},
+        {subghz_frequency_ranges[2],                                       [=]() { bruceConfigPins.setRfScanRange(2); }},
+        {subghz_frequency_ranges[3],                                       [=]() { bruceConfigPins.setRfScanRange(3); }},
+    };
+
+    loopOptions(options);
+    options.clear();
+
+    if (option == 1) { // Fixed Frequency Selector
+        options = {};
+        int ind = 0;
+        int arraySize = sizeof(subghz_frequency_list) / sizeof(subghz_frequency_list[0]);
+        for (int i = 0; i < arraySize; i++) {
+            String tmp = String(subghz_frequency_list[i], 2) + "Mhz";
+            options.push_back({tmp.c_str(), [=]() {
+                                   bruceConfigPins.setRfFreq(subghz_frequency_list[i], 2);
+                               }});
+            if (int(currentFrequency * 100) == int(subghz_frequency_list[i] * 100)) ind = i;
+        }
+        loopOptions(options, ind);
+        options.clear();
+    }
+
+    if (bruceConfigPins.rfFxdFreq) displayTextLine("Scan freq set to " + String(bruceConfigPins.rfFreq));
+    else displayTextLine("Range set to " + String(subghz_frequency_ranges[bruceConfigPins.rfScanRange]));
+}
+
+uint32_t keeloq_encrypt(const uint32_t data, const uint64_t key) {
+    uint32_t x = data, r;
+
+    for (r = 0; r < 528; r++)
+        x = (x >> 1) ^ ((bitAt(x, 0) ^ bitAt(x, 16) ^ (uint32_t)bitAt(key, r & 63) ^
+                         bitAt(KEELOQ_NLF, g5(x, 1, 9, 20, 26, 31)))
+                        << 31);
+
+    return x;
+}
+
+uint32_t keeloq_decrypt(const uint32_t data, const uint64_t key) {
+    uint32_t x = data, r;
+
+    for (r = 0; r < 528; r++)
+        x = (x << 1) ^ bitAt(x, 31) ^ bitAt(x, 15) ^ (uint32_t)bitAt(key, (15 - r) & 63) ^
+            bitAt(KEELOQ_NLF, g5(x, 0, 8, 19, 25, 30));
+
+    return x;
+}
+
+uint64_t keeloq_normal_learning(uint32_t data, const uint64_t key) {
+    uint32_t k1, k2;
+
+    data &= 0x0FFFFFFF;
+    data |= 0x20000000;
+    k1 = keeloq_decrypt(data, key);
+
+    data &= 0x0FFFFFFF;
+    data |= 0x60000000;
+    k2 = keeloq_decrypt(data, key);
+
+    return ((uint64_t)k2 << 32) | k1;
+}

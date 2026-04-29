@@ -19,7 +19,7 @@ void _setup_gpio() {
 int getBattery() {
     uint8_t percent = 0;
     percent = M5.Power.getBatteryLevel();
-    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
+    return (percent < 0) ? 1 : (percent >= 100) ? 100 : percent;
 }
 
 /*********************************************************************
@@ -68,7 +68,7 @@ void goToDeepSleep() { M5.Power.deepSleep(); }
 /*********************************************************************
 ** Function: checkReboot
 ** location: mykeyboard.cpp
-** Btn logic to tornoff the device (name is odd btw)
+** Btn logic to turn off the device (name is odd btw)
 **********************************************************************/
 void checkReboot() {}
 

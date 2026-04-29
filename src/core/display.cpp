@@ -6,6 +6,7 @@
 #include "utils.h"
 #include <JPEGDecoder.h>
 #include <interface.h> //for charging ischarging to print charging indicator
+#include <memory>
 
 #define MAX_MENU_SIZE (int)(tftHeight / 25)
 
@@ -20,6 +21,8 @@ void panelSleep(bool on) {
         delay(120);
     }
 #endif
+    // Disables tft writings on the display
+    tft.setSleepMode(on);
 }
 
 bool __attribute__((weak)) isCharging() { return false; }
@@ -41,7 +44,11 @@ void displayScrollingText(const String &text, Opt_Coord &coord) {
         String scrollingPart =
             displayText.substring(i, i + (coord.size - 1)); // Display charLimit characters at a time
         tft.fillRect(
-            coord.x, coord.y, (coord.size - 1) * LW * tft.textsize, LH * tft.textsize, bruceConfig.bgColor
+            coord.x,
+            coord.y,
+            (coord.size - 1) * LW * tft.getTextSize(),
+            LH * tft.getTextSize(),
+            bruceConfig.bgColor
         ); // Clear display area
         tft.setCursor(coord.x, coord.y);
         tft.setCursor(coord.x, coord.y);
@@ -87,6 +94,7 @@ void resetTftDisplay(int x, int y, uint16_t fc, int size, uint16_t bg, uint16_t 
     tft.fillScreen(screen);
     tft.setTextSize(size);
     tft.setTextColor(fc, bg);
+    tft.setTextDatum(0);
 }
 
 /***************************************************************************************
@@ -174,7 +182,20 @@ int8_t displayMessage(
     tft.setTextColor(color);
     tft.setTextSize(FM);
     tft.setTextDatum(TC_DATUM);
-    tft.drawString(message, tftWidth / 2, tftHeight / 2 - 20);
+
+    // Handle newline characters in message
+    String msg = String(message);
+    int y = tftHeight / 2 - 20;
+    int start = 0;
+    int end = msg.indexOf('\n');
+
+    while (end != -1) {
+        tft.drawString(msg.substring(start, end), tftWidth / 2, y);
+        y += FM * 8;
+        start = end + 1;
+        end = msg.indexOf('\n', start);
+    }
+    tft.drawString(msg.substring(start), tftWidth / 2, y);
 
     tft.setTextDatum(BC_DATUM);
     int16_t buttonHeight = 20;
@@ -465,6 +486,7 @@ int loopOptions(
         );
     if (index >= options.size()) index = 0;
     bool firstRender = true;
+    static unsigned long menuOpenTs = 0; // timestamp when menu was first rendered
     drawMainBorder();
     while (1) {
         // Check for shutdown before drawing menu to avoid drawing a black bar on the screen
@@ -504,6 +526,7 @@ int loopOptions(
                         firstRender
                     );
             }
+            if (firstRender) menuOpenTs = millis();
             firstRender = false;
             redraw = false;
         }
@@ -516,6 +539,15 @@ int loopOptions(
         if (menuType == MENU_TYPE_REGULAR) {
             String txt = options[index].label;
             displayScrollingText(txt, coord);
+        }
+
+        // Checks ESC Press first, to not exit after PrevPress is processed
+        // PrevPress condition is a StickCPlus workaround, as it uses the same button for Prev and Esc
+        // Same happens to Core and some other boards
+        if (EscPress && PrevPress) EscPress = false;
+        if (menuType != MENU_TYPE_MAIN && check(EscPress)) {
+            index = -1;
+            break;
         }
 
         if (PrevPress || check(UpPress)) {
@@ -573,7 +605,11 @@ int loopOptions(
         /* Select and run function
         forceMenuOption is set by a SerialCommand to force a selection within the menu
         */
-        if (check(SelPress) || forceMenuOption >= 0) {
+        // Prevent immediate selection if the SEL button was already being held when the menu opened.
+        // Allow a short grace period for the user to release the button first.
+        static const unsigned long MENU_SELECT_IGNORE_MS = 600; // ms to ignore SEL after menu opens
+
+        if (forceMenuOption >= 0 || (millis() - menuOpenTs > MENU_SELECT_IGNORE_MS && check(SelPress))) {
             uint16_t chosen = index;
             if (forceMenuOption >= 0) {
                 chosen = forceMenuOption;
@@ -586,30 +622,7 @@ int loopOptions(
         }
         // interpreter_start -> running the interpreter
         // interpreter -> loopOptions helper inside the Javascript
-        if (interpreter_start && !interpreter) { break; }
-
-#ifdef HAS_KEYBOARD
-        if (check(EscPress)) {
-            index = -1;
-            break;
-        }
-        /* DISABLED: may conflict with custom shortcuts
-        int pressed_number = checkNumberShortcutPress();
-        if (pressed_number >= 0) {
-            if (index == pressed_number) {
-                // press 2 times the same number to confirm
-                options[index].operation();
-                break;
-            }
-            // else only highlight the option
-            index = pressed_number;
-            if ((index + 1) > options.size()) index = options.size() - 1;
-            redraw = true;
-        }*/
-
-#elif defined(T_EMBED) || defined(HAS_TOUCH) || !defined(HAS_SCREEN)
-        if (menuType != MENU_TYPE_MAIN && check(EscPress)) break;
-#endif
+        if (interpreter_state > 0 && !interpreter) { break; }
     }
     return index;
 }
@@ -800,15 +813,15 @@ void drawStatusBar() {
     }
 
     if (clock_set) {
-        setTftDisplay(12, 12, bruceConfig.priColor, 1, bruceConfig.bgColor);
+        int clock_fontsize = 1; // Font size of the clock / BRUCE + BRUCE_VERSION
+        setTftDisplay(12, 12, bruceConfig.priColor, clock_fontsize, bruceConfig.bgColor);
+        tft.fillRect(12, 12, 100, clock_fontsize * LH, bruceConfig.bgColor);
 #if defined(HAS_RTC)
-        _rtc.GetTime(&_time);
-        snprintf(timeStr, sizeof(timeStr), "%02d:%02d", _time.Hours, _time.Minutes);
-        tft.print(timeStr);
+        updateTimeStr(_rtc.getTimeStruct());
 #else
         updateTimeStr(rtc.getTimeStruct());
-        tft.print(timeStr);
 #endif
+        tft.print(timeStr);
     } else {
         setTftDisplay(12, 12, bruceConfig.priColor, 1, bruceConfig.bgColor);
         tft.print("BRUCE " + String(BRUCE_VERSION));
@@ -877,18 +890,8 @@ void printCenterFootnote(String text) {
 }
 
 /***************************************************************************************
-** Function name: getBattery()
-** Description:   Delivers the battery value from 1-100
-***************************************************************************************/
-int getBattery() {
-    int percent = 0;
-
-    return (percent < 0) ? 0 : (percent >= 100) ? 100 : percent;
-}
-
-/***************************************************************************************
 ** Function name: drawBatteryStatus()
-** Description:   Delivers the battery value from 1-100
+** Description:   Draws battery info into the Status bar
 ***************************************************************************************/
 void drawBatteryStatus(uint8_t bat) {
     if (bat == 0) return;
@@ -947,7 +950,7 @@ Opt_Coord listFiles(int index, std::vector<FileList> fileList) {
         start = index - MAX_ITEMS + 1;
         if (start < 0) start = 0;
     }
-    int nchars = (tftWidth - 20) / (6 * tft.textsize);
+    int nchars = (tftWidth - 20) / (6 * tft.getTextSize());
     String txt = ">";
     while (i < arraySize) {
         if (i >= start) {
@@ -1231,6 +1234,25 @@ bool showJpeg(FS &fs, String filename, int x, int y, bool center) {
     return true;
 }
 
+bool showJpeg(const uint8_t *data_array, size_t data_size, int x, int y, bool center) {
+    bool decoded = false;
+    if (data_array) {
+        decoded = JpegDec.decodeArray(data_array, data_size);
+    } else {
+        return false;
+    }
+
+    if (decoded) {
+        if (center) {
+            x = x + (tftWidth - JpegDec.width) / 2;
+            y = y + (tftHeight - JpegDec.height) / 2;
+        }
+        jpegRender(x, y);
+    }
+
+    return true;
+}
+
 #if !defined(LITE_VERSION)
 // ####################################################################################################
 //  Draw a GIF on the TFT
@@ -1402,7 +1424,9 @@ int Gif::getLastError() { return gif->getLastError(); }
  * >0  : Play the GIF for the specified duration in milliseconds
  *       (e.g., 1000 = play for 1 second)
  */
-bool showGif(FS *fs, const char *filename, int x, int y, bool center, int playDurationMs) {
+bool showGif(
+    FS *fs, const char *filename, int x, int y, bool center, int playDurationMs, bool resetButtonStatus
+) {
     if (!fs->exists(filename)) return false;
 
     Gif gif;
@@ -1420,7 +1444,7 @@ bool showGif(FS *fs, const char *filename, int x, int y, bool center, int playDu
         result = gif.playFrame(x, y);
         if (result == -1) log_e("GIF playFrame error: %d\n", gif.getLastError());
 
-        if (check(AnyKeyPress)) break;
+        if (check(AnyKeyPress, resetButtonStatus)) break;
 
         if (playDurationMs > 0 && (millis() - timeStart) > playDurationMs) break;
         if (playDurationMs == 0 && result == 0) break;
@@ -1621,7 +1645,7 @@ bool drawBmp(FS &fs, String filename, int x, int y, bool center) {
     return true;
 }
 
-bool drawImg(FS &fs, String filename, int x, int y, bool center, int playDurationMs) {
+bool drawImg(FS &fs, String filename, int x, int y, bool center, int playDurationMs, bool resetButtonStatus) {
     String ext = filename.substring(filename.lastIndexOf('.'));
     ext.toLowerCase();
     uint8_t fls = 2;         // 2 for Little FS
@@ -1633,7 +1657,8 @@ bool drawImg(FS &fs, String filename, int x, int y, bool center, int playDuratio
 
 #if !defined(LITE_VERSION)
 
-    else if (ext.endsWith("gif")) return showGif(&fs, filename.c_str(), x, y, center, playDurationMs);
+    else if (ext.endsWith("gif"))
+        return showGif(&fs, filename.c_str(), x, y, center, playDurationMs, resetButtonStatus);
 #endif
     else log_e("Image not supported");
 
@@ -1649,7 +1674,14 @@ bool drawImg(FS &fs, String filename, int x, int y, bool center, int playDuratio
 #else
 #define MAX_IMAGE_WIDTH TFT_HEIGHT
 #endif
-PNG *png;
+PNG *png = nullptr;
+// Optional pointer to write decoded lines into a cached BIN file
+static File *pngBinOut = nullptr;
+static bool pngCacheOnly = false;
+// Optionally use heap capabilities on ESP32 to pick the best memory region for the decoder
+#if defined(ESP32)
+#include <esp_heap_caps.h>
+#endif
 // Functions to access a file on the SD card
 File myfile;
 FS *_fs;
@@ -1681,10 +1713,76 @@ int PNGDraw(PNGDRAW *pDraw) {
     uint8_t g = ((uint16_t)bruceConfig.bgColor & 0x07E0) >> 3;
     uint8_t b = ((uint16_t)bruceConfig.bgColor & 0x001F) << 3;
     png->getLineAsRGB565(pDraw, usPixels, PNG_RGB565_BIG_ENDIAN, b << 16 | g << 8 | r);
-    tft.drawPixel(0, 0, 0);
-    tft.drawPixel(0, 0, 0);
-    tft.pushImage(xpos, ypos + pDraw->y, pDraw->iWidth, 1, usPixels);
+    if (!pngCacheOnly) {
+        tft.drawPixel(0, 0, 0);
+        tft.drawPixel(0, 0, 0);
+        tft.pushImage(xpos, ypos + pDraw->y, pDraw->iWidth, 1, usPixels);
+    }
+    if (pngBinOut) { pngBinOut->write((uint8_t *)usPixels, pDraw->iWidth * sizeof(uint16_t)); }
     return 1;
+}
+
+// Build a cache path alongside the PNG: <dir>/tmp/<basename>.bin
+static String buildPngBinPath(const String &pngPath) {
+    int slash = pngPath.lastIndexOf('/');
+    String dir = (slash >= 0) ? pngPath.substring(0, slash) : "";
+    String name = pngPath.substring(slash + 1);
+    int dot = name.lastIndexOf('.');
+    if (dot > 0) name = name.substring(0, dot);
+
+    String tmpDir = dir.length() ? dir + "/tmp" : "/tmp";
+    if (!tmpDir.startsWith("/")) tmpDir = "/" + tmpDir;
+
+    return tmpDir + "/" + name + ".bin";
+}
+
+static bool ensureTmpDir(FS &fs, const String &binPath) {
+    int slash = binPath.lastIndexOf('/');
+    if (slash < 0) return false;
+    String dir = binPath.substring(0, slash);
+    if (fs.exists(dir)) return true;
+    return fs.mkdir(dir);
+}
+
+// Render a previously cached BIN (RGB565 LE with 2-byte width/height header)
+static bool drawPngBin(FS &fs, const String &binPath, int x, int y, bool center) {
+    File f = fs.open(binPath, FILE_READ);
+    if (!f) return false;
+
+    uint16_t w = 0, h = 0;
+    if (f.read((uint8_t *)&w, sizeof(uint16_t)) != sizeof(uint16_t) ||
+        f.read((uint8_t *)&h, sizeof(uint16_t)) != sizeof(uint16_t)) {
+        f.close();
+        return false;
+    }
+
+    if (center) {
+        x = x + (tftWidth - w) / 2;
+        y = y + (tftHeight - h) / 2;
+    }
+
+    if (x >= tft.width() || y >= tft.height()) {
+        f.close();
+        return false;
+    }
+
+    std::unique_ptr<uint16_t[]> line(new (std::nothrow) uint16_t[w]);
+    if (!line) {
+        f.close();
+        return false;
+    }
+
+    size_t rowBytes = w * sizeof(uint16_t);
+    for (uint16_t row = 0; row < h; ++row) {
+        if (f.read((uint8_t *)line.get(), rowBytes) != rowBytes) {
+            f.close();
+            return false;
+        }
+        tft.pushImage(x, y + row, w, 1, line.get());
+    }
+
+    f.close();
+    return true;
 }
 
 bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
@@ -1692,9 +1790,29 @@ bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
     _fs = &fs;
     uint32_t dt = millis();
 
-    // After starting WebUI, it is not possible to draw PNGs anymore, because there are no RAM memoty
-    // available Need to fin out a way to make it work
-    void *mem = psramFound() ? ps_malloc(sizeof(PNG)) : malloc(sizeof(PNG));
+    String binPath = buildPngBinPath(filename);
+    if (fs.exists(binPath)) {
+        if (pngCacheOnly) return true; // cache already ready
+        if (drawPngBin(fs, binPath, x, y, center)) return true;
+        fs.remove(binPath); // stale cache, fall back to decode
+    }
+
+    // Allocate decoder only while drawing, then release to keep RAM available for Wi-Fi/AP usage
+#if defined(ESP32)
+    bool usedHeapCaps = true;
+    void *mem = psramFound() ? heap_caps_malloc(sizeof(PNG), MALLOC_CAP_SPIRAM | MALLOC_CAP_8BIT)
+                             : heap_caps_malloc(sizeof(PNG), MALLOC_CAP_8BIT);
+    if (!mem) {
+        mem = malloc(sizeof(PNG));
+        usedHeapCaps = false;
+    }
+#else
+    void *mem = malloc(sizeof(PNG));
+#endif
+#if !defined(ESP32)
+    bool usedHeapCaps = false;
+#endif
+
     if (!mem) {
         Serial.println("Fail alloc PNG!");
         bruceConfig.theme.label = true;
@@ -1707,6 +1825,18 @@ bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
         // Serial.printf("image specs: (%d x %d), %d bpp, pixel type: %d\n", png->getWidth(),
         // png->getHeight(), png->getBpp(), png->getPixelType());
 
+        File binFile;
+        if (ensureTmpDir(fs, binPath)) {
+            binFile = fs.open(binPath, FILE_WRITE);
+            if (binFile) {
+                uint16_t w = png->getWidth();
+                uint16_t h = png->getHeight();
+                binFile.write((uint8_t *)&w, sizeof(uint16_t));
+                binFile.write((uint8_t *)&h, sizeof(uint16_t));
+                pngBinOut = &binFile;
+            }
+        }
+
         if (center) {
             xpos = x + (tftWidth - png->getWidth()) / 2;
             ypos = y + (tftHeight - png->getHeight()) / 2;
@@ -1718,19 +1848,50 @@ bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
             rc = png->decode(NULL, 0);
             png->close();
         }
+
+        if (pngBinOut) {
+            pngBinOut->close();
+            pngBinOut = nullptr;
+        } else {
+            if (fs.exists(binPath) && rc != PNG_SUCCESS) fs.remove(binPath);
+        }
+        if (rc != PNG_SUCCESS && fs.exists(binPath)) { fs.remove(binPath); }
+
         // How long did rendering take...
         Serial.print("PNG Loaded in ");
         Serial.print(millis() - dt);
         Serial.println("ms");
     } else {
-    ERROR:
-        delete png;
-        return false;
+        // Decode/open failed, ensure no stale cache
+        if (fs.exists(binPath)) fs.remove(binPath);
     }
-    delete png;
-    return true;
+
+    // Destroy placement-new object and free memory so RAM is available after rendering
+    png->~PNG();
+#if defined(ESP32)
+    if (usedHeapCaps) heap_caps_free(mem);
+    else free(mem);
+#else
+    free(mem);
+#endif
+    png = nullptr;
+
+    return rc == PNG_SUCCESS;
+}
+
+// Prepare (or verify) the cached BIN for a PNG without rendering it on screen
+bool preparePngBin(FS &fs, String filename) {
+    bool previous = pngCacheOnly;
+    pngCacheOnly = true;
+    bool ok = drawPNG(fs, filename, 0, 0, false);
+    pngCacheOnly = previous;
+    return ok;
 }
 #else
+bool preparePngBin(FS &fs, String filename) {
+    log_w("PNG: Not supported in this version");
+    return true;
+}
 bool drawPNG(FS &fs, String filename, int x, int y, bool center) {
     log_w("PNG: Not supported in this version");
     return false;

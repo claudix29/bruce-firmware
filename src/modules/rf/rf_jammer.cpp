@@ -2,30 +2,36 @@
 #include "core/display.h"
 #include "rf_utils.h"
 
-RFJammer::RFJammer(bool full) : fullJammer(full) { setup(); }
+static const uint32_t MAX_JAM_TIME_MS = 20000;
+static const uint32_t MAX_SEQUENCE = 50;
+static const uint32_t DURATION_CYCLES = 3;
 
-RFJammer::~RFJammer() { deinitRfModule(); }
+RFJammer::RFJammer(bool full) : fullJammer(full) {
+    setup();
+}
+
+RFJammer::~RFJammer() {
+    deinitRfModule();
+}
 
 void RFJammer::setup() {
-    nTransmitterPin = bruceConfig.rfTx;
+    nTransmitterPin = bruceConfigPins.rfTx;
     if (!initRfModule("tx")) return;
 
-    if (bruceConfig.rfModule == CC1101_SPI_MODULE) { // CC1101 in use
+    if (bruceConfigPins.rfModule == CC1101_SPI_MODULE) {
         nTransmitterPin = bruceConfigPins.CC1101_bus.io0;
     }
 
-    bool sendRF = true;
-
+    sendRF = true;
     display_banner();
 
-    if (fullJammer) return run_full_jammer();
+    if (fullJammer) run_full_jammer();
     else run_itmt_jammer();
 }
 
 void RFJammer::display_banner() {
     drawMainBorderWithTitle("RF Jammer");
     printSubtitle(String(fullJammer ? "Full Jammer" : "Intermittent Jammer"));
-
     padprintln("Sending...");
     padprintln("");
     padprintln("");
@@ -45,7 +51,7 @@ void RFJammer::run_full_jammer() {
             break;
         }
     }
-    digitalWrite(nTransmitterPin, LOW); // Turn off Jammer
+    digitalWrite(nTransmitterPin, LOW);
 }
 
 void RFJammer::run_itmt_jammer() {
@@ -59,15 +65,57 @@ void RFJammer::run_itmt_jammer() {
                     returnToMenu = true;
                     break;
                 }
-                digitalWrite(nTransmitterPin, HIGH); // Ativa o pino
-                // keeps the pin active for a while and increase increase
-                for (int widthsize = 1; widthsize <= (1 + sequence); widthsize++) { delayMicroseconds(10); }
-
-                digitalWrite(nTransmitterPin, LOW); // Desativa o pino
-                // keeps the pin inactive for the same time as before
-                for (int widthsize = 1; widthsize <= (1 + sequence); widthsize++) { delayMicroseconds(10); }
             }
         }
+
+        if (sendRF) {
+            send_random_pattern(100);
+        }
     }
-    digitalWrite(nTransmitterPin, LOW); // Turn off Jammer
+    digitalWrite(nTransmitterPin, LOW);
+}
+
+void RFJammer::send_optimized_pulse(int width) {
+    digitalWrite(nTransmitterPin, HIGH);
+
+    for (uint32_t i = 0; i < width; i += 10) {
+        digitalWrite(nTransmitterPin, HIGH);
+        delayMicroseconds(5);
+
+        if (i % 20 == 0) {
+            digitalWrite(nTransmitterPin, LOW);
+            delayMicroseconds(2);
+            digitalWrite(nTransmitterPin, HIGH);
+        }
+
+        delayMicroseconds(5);
+    }
+
+    digitalWrite(nTransmitterPin, LOW);
+
+    uint32_t lowPeriod = width + (width % 23);
+    for (uint32_t i = 0; i < lowPeriod; i += 10) {
+        digitalWrite(nTransmitterPin, LOW);
+        delayMicroseconds(10);
+    }
+}
+
+void RFJammer::send_random_pattern(int numPulses) {
+    uint32_t startTime = millis();
+
+    for (int i = 0; i < numPulses && sendRF; i++) {
+        uint32_t pulseWidth = 5 + (millis() % 46);
+
+        digitalWrite(nTransmitterPin, HIGH);
+        delayMicroseconds(pulseWidth);
+
+        digitalWrite(nTransmitterPin, LOW);
+
+        uint32_t spaceWidth = 5 + (micros() % 96);
+        delayMicroseconds(spaceWidth);
+
+        if (millis() - startTime > 100) {
+            break;
+        }
+    }
 }

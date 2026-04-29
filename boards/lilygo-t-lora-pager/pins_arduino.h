@@ -38,8 +38,11 @@
 #define EXPANDS_SD_EN 12
 
 #define IO_EXPANDER_PCA9555
+// to make GPS stays turned on all the time
+// making Wardrive start way faster
+// comment the next line
 #define IO_EXP_GPS EXPANDS_GPS_EN
-// Main I2C Bus
+//  Main SPI Bus
 #define SPI_SS_PIN 21
 #define SPI_MOSI_PIN 34
 #define SPI_MISO_PIN 33
@@ -113,6 +116,14 @@ static const uint8_t SCL = GROVE_SCL;
 #define W5500_MISO_PIN SPI_MISO_PIN
 #define W5500_INT_PIN 43
 
+// Lora setup pins
+#define LORA_SCK SPI_SCK_PIN
+#define LORA_MISO SPI_MISO_PIN
+#define LORA_MOSI SPI_MOSI_PIN
+#define LORA_CS 36
+#define LORA_RST 47
+#define LORA_DIO0 14
+
 // Serial
 #define SERIAL_TX 43
 #define SERIAL_RX 44
@@ -141,7 +152,7 @@ static const uint8_t RX = SERIAL_RX;
 #define BTN_ACT LOW
 
 // IR
-#define LED -1
+#define TXLED -1
 #define TXLED -1
 #define RXLED -1
 #define LED_ON HIGH
@@ -160,6 +171,13 @@ static const uint8_t RX = SERIAL_RX;
 // #define PN532_RF_REST 45
 // #define PN532_IRQ 17
 
+// RTC
+#define HAS_RTC
+#define RTC_SDA GROVE_SDA
+#define RTC_SCL GROVE_SCL
+#define RTC_INTERRUPT_PIN 1
+#define HAS_RTC_PCF85063A
+
 // BadUSB
 #define USB_as_HID 1
 
@@ -170,8 +188,8 @@ static const uint8_t RX = SERIAL_RX;
 #define CAPS_LOCK 0x00
 #define KEY_SHIFT 0x1c
 #define KEY_FN 0x14
-#define KEY_BACKSPACE 0x1d
-#define KEY_ENTER 0x13
+#define KEY_BACKSPACE 0x08
+#define KEY_ENTER 0x0D
 
 // Interrupt IO
 #define RTC_INT 1
@@ -190,6 +208,8 @@ static const uint8_t RX = SERIAL_RX;
 // TODO: Need to implement ES8311
 #define HAS_NS4168_SPKR
 #define HAS_ES8311
+#define ES8311_CODEC 1
+#define ES8311_ADDR 0x18
 #define BCLK 11
 #define WCLK 18
 #define DOUT 45
@@ -197,7 +217,7 @@ static const uint8_t RX = SERIAL_RX;
 
 // Mic
 // TODO: Need to implement ES8311
-#define PIN_WS 18
+#define PIN_BCLK 18
 #define PIN_CLK 11
 #define PIN_DATA 17
 

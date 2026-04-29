@@ -4,7 +4,7 @@ name: Build and Push OR check-PR
 on:
   pull_request:
     branches:
-      - main
+      - main, dev
   workflow_dispatch:
     inputs:
       board:
@@ -61,30 +61,35 @@ jobs:
         with:
           python-version: "3.13"
 
-      - name: Cache pip
-        uses: actions/cache@v4
-        with:
-          path: ~/.cache/pip
-          key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
-          restore-keys: |
-            ${{ runner.os }}-pip-
+      - name: Install build deps (multilib)
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends gcc-multilib libc6-dev-i386
 
-      - name: Cache PlatformIO
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.platformio
-          key: Bruce-platformio-${{ hashFiles('**/platformio.ini') }}
-          restore-keys: Bruce-platformio-
+      # - name: Cache pip
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: ~/.cache/pip
+      #     key: ${{ runner.os }}-pip-${{ hashFiles('**/requirements.txt') }}
+      #     restore-keys: |
+      #       ${{ runner.os }}-pip-
 
-      - name: Restore PIO
-        uses: actions/cache/restore@v4
-        with:
-          path: |
-            ${{ github.workspace }}/.pio
-          key: Bruce-pio-${{ matrix.board.env }}-${{ github.run_id }}-${{ github.run_attempt }}
-          restore-keys: |
-                Bruce-pio-${{ matrix.board.env }}-
+      # - name: Cache PlatformIO
+      #   uses: actions/cache@v4
+      #   with:
+      #     path: |
+      #       ~/.platformio
+      #     key: Bruce-platformio-${{ hashFiles('**/platformio.ini') }}
+      #     restore-keys: Bruce-platformio-
+
+      # - name: Restore PIO
+      #   uses: actions/cache/restore@v4
+      #   with:
+      #     path: |
+      #       ${{ github.workspace }}/.pio
+      #     key: Bruce-pio-${{ matrix.board.env }}-${{ github.run_id }}-${{ github.run_attempt }}
+      #     restore-keys: |
+      #           Bruce-pio-${{ matrix.board.env }}-
 
       - name: Install PlatformIO Core
         run: |
@@ -105,12 +110,12 @@ jobs:
         run: |
           platformio run -e ${{ matrix.board.env }}
 
-      - name: Cache PIO
-        uses: actions/cache/save@v4
-        with:
-          path: |
-            ${{ github.workspace }}/.pio
-          key: Bruce-pio-${{ matrix.board.env }}-${{ github.run_id }}-${{ github.run_attempt }}
+      # - name: Cache PIO
+      #   uses: actions/cache/save@v4
+      #   with:
+      #     path: |
+      #       ${{ github.workspace }}/.pio
+      #     key: Bruce-pio-${{ matrix.board.env }}-${{ github.run_id }}-${{ github.run_attempt }}
 
       # - name: Merge Files
       #   run: |

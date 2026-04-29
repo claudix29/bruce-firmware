@@ -1,10 +1,33 @@
 #pragma once
+#if !defined(LITE_VERSION)
 #include <Arduino.h>
 #include <FS.h>
 #include <SD.h>
 #include <WiFi.h>
 #include <set>
 
+struct HandshakeTracker {
+    bool msg1 = false;
+    bool msg2 = false;
+    bool msg3 = false;
+    bool msg4 = false;
+};
+
+extern HandshakeTracker hsTracker;
+
+bool handshakeUsable(const HandshakeTracker &hs);
+
+// List of channels to hop through
+// priority channels are used more often
+#ifdef CONFIG_IDF_TARGET_ESP32C5
+const uint8_t all_wifi_channels[] = {1,   2,   3,   4,   5,   6,   7,   8,   9,   10,  11,  12,
+                                     36,  40,  44,  48,  52,  56,  60,  64,  100, 104, 108, 112,
+                                     116, 120, 124, 128, 132, 136, 140, 149, 153, 157, 161};
+const uint8_t pri_wifi_channels[] = {1, 6, 11, 36, 40, 44, 48, 149, 153, 157, 161};
+#else
+const uint8_t all_wifi_channels[] = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12};
+const uint8_t pri_wifi_channels[] = {1, 6, 11};
+#endif
 struct BeaconList {
     char MAC[6];
     uint8_t channel;
@@ -51,3 +74,5 @@ bool writeHeader(File file);
 void sniffer_setup();
 
 void sniffer(void *buf, wifi_promiscuous_pkt_type_t type);
+
+#endif

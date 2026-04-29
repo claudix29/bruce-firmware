@@ -67,11 +67,11 @@ void IrRead::setup() {
     const std::vector<std::pair<String, int>> pins = IR_RX_PINS;
     int count = 0;
     for (auto pin : pins) {
-        if (pin.second == bruceConfig.irRx) count++;
+        if (pin.second == bruceConfigPins.irRx) count++;
     }
     if (count == 0) gsetIrRxPin(true); // Open dialog to choose irRx pin
 
-    setup_ir_pin(bruceConfig.irRx, INPUT);
+    setup_ir_pin(bruceConfigPins.irRx, INPUT_PULLUP);
     if (headless) return;
     // else
     returnToMenu = true; // make sure menu is redrawn when quitting in any point
@@ -81,15 +81,27 @@ void IrRead::setup() {
              quickButtons = quickButtonsTV;
              begin();
              return loop();
-         }                 },
+         }                     },
         {"AC",
          [&]() {
              quickButtons = quickButtonsAC;
              begin();
              return loop();
-         }                 },
-        {"SOUND", [&]() {
+         }                     },
+        {"FAN",
+         [&]() {
+             quickButtons = quickButtonsFAN;
+             begin();
+             return loop();
+         }                     },
+        {"SOUND",
+         [&]() {
              quickButtons = quickButtonsSOUND;
+             begin();
+             return loop();
+         }                     },
+        {"LED STRIP", [&]() {
+             quickButtons = quickButtonsLED;
              begin();
              return loop();
          }},
